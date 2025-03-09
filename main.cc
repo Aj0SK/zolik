@@ -28,6 +28,19 @@ class Card {
    public:
     Card() : is_joker_(true), col_(Color::Hearts), val_(0) {}
     Card(Color col, int val) : is_joker_(false), col_(col), val_(val) {}
+    Card(Color col, std::string_view str_val) {
+        if (str_val == "Joker") {
+            is_joker_ = true;
+            return;
+        }
+        const auto it = std::find(kValueNames.begin(), kValueNames.end(), str_val);
+        if (it == kValueNames.end()) {
+            std::cerr << "Incorrect card string value " << str_val << "\n";
+            exit(1);
+        }
+        col_ = col;
+        val_ = std::distance(kValueNames.begin(), it);
+    }
 
     bool is_joker() const { return is_joker_; }
     Color color() const { return col_; }
@@ -392,8 +405,8 @@ int main() {
     std::cout << "\n\n";
     constexpr int kRandomCardsToUse = 8 * 13 + 4 - 10;
 
-    std::random_device rd;
-    std::mt19937 g(rd());
+    std::seed_seq seed {2, 1, 0, 4};
+    std::mt19937 g(seed);
     std::shuffle(all_cards.begin(), all_cards.end(), g);
     std::sort(all_cards.begin(), all_cards.begin() + kRandomCardsToUse);
 
