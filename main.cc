@@ -5,6 +5,8 @@
 #include <iostream>
 #include <random>
 #include <vector>
+#include <unordered_set>
+#include <bit>
 
 static constexpr std::array<std::array<std::string_view, 4>, 2> kColorNames = {
     {{{"\u2665", "\u2663", "\u2660", "\u2666"}},
@@ -18,6 +20,9 @@ std::vector<int> run_table[5][3][1 << 5];
 std::vector<int> kind_table[5][2][1 << 4];
 
 enum class Color { Hearts = 0, Spades = 1, Diamonds = 2, Clubs = 3 };
+
+constexpr Color kAllColorsList[] = {Color::Hearts, Color::Spades,
+                                    Color::Diamonds, Color::Clubs};
 
 class Card {
    public:
@@ -86,8 +91,32 @@ struct CardSet {
         }
         return size;
     }
-    int empty() const { return size() == 0; }
+    int empty() const { 
+        uint32_t sum = jokers_cnt_;
+        for (uint32_t x : per_color_counters_) {
+            sum += x;
+        }
+        return sum == 0;
+    }
     int jokers_count() const { return jokers_cnt_; }
+
+    bool operator==(const CardSet& other) const
+    {
+        return this->jokers_cnt_ == other.jokers_cnt_ && this->per_color_counters_ == other.per_color_counters_;
+    }
+    struct HashFunction
+    {
+        size_t operator()(const CardSet& point) const
+        {
+            const auto IntHasher = std::hash<uint32_t>();
+            size_t combined_hash = IntHasher(point.jokers_cnt_);
+            int idx = 0;
+            for (uint32_t x : point.per_color_counters_) {
+                combined_hash ^= std::rotl(IntHasher(x), ++idx) ;
+            }
+            return combined_hash;
+        }
+    };
 
    private:
     int jokers_cnt_;
@@ -169,17 +198,20 @@ std::vector<int> prepare_run_table(int j_cnt,
     return out;
 }
 
+std::unordered_set<CardSet, CardSet::HashFunction> UNSOLVABLE_CARDSET_CACHE;
+int cache_useful = 0;
 bool Solve(CardSet& cs, int& call_counter) {
     ++call_counter;
-    if (cs.empty()) {
-        return true;
+    if (UNSOLVABLE_CARDSET_CACHE.count(cs) == 1) {
+        ++cache_useful;
+        return false;
     }
+    if (cs.empty()) return true;
     for (int jokers_to_use = 0; jokers_to_use <= cs.jokers_count();
          ++jokers_to_use) {
         // Run handling.
         for (int run_len : {5, 4, 3}) {
-            for (Color color : {Color::Hearts, Color::Spades, Color::Diamonds,
-                                Color::Clubs}) {
+            for (Color color : kAllColorsList) {
                 // A 2 3 4 5 6 7 8 9 10   J  Q  K
                 // 0 1 2 3 4 5 6 7 8  9  10 11 12
                 for (int idx = 0; idx + run_len <= 14; ++idx) {
@@ -191,6 +223,7 @@ bool Solve(CardSet& cs, int& call_counter) {
                     }
                     const auto& options =
                         run_table[jokers_to_use][run_len - 3][entry];
+                    if (options.empty()) continue;
                     cs.RemoveJokers(jokers_to_use);
                     bool solved = false;
                     int success_option;
@@ -238,13 +271,13 @@ bool Solve(CardSet& cs, int& call_counter) {
             // 0 1 2 3 4 5 6 7 8  9  10 11 12
             for (int value = 0; value < 13; ++value) {
                 uint32_t entry = 0;
-                for (int i = 0; i < 4; ++i) {
+                for (Color color : kAllColorsList) {
                     entry <<= 1;
-                    entry +=
-                        cs.Contains(Card(static_cast<Color>(i), value)) ? 1 : 0;
+                    entry += cs.Contains(Card(color, value)) ? 1 : 0;
                 }
                 const auto& options =
                     kind_table[jokers_to_use][kind_count - 3][entry];
+                if (options.empty()) continue;
                 cs.RemoveJokers(jokers_to_use);
                 bool solved = false;
                 int success_option;
@@ -284,6 +317,7 @@ bool Solve(CardSet& cs, int& call_counter) {
             }  // value cycle end
         }  // kind cycle end
     }  // jokers cycle end
+    UNSOLVABLE_CARDSET_CACHE.insert(cs);
     return false;
 }
 
@@ -348,8 +382,7 @@ int main() {
     for (int i = 0; i < 4; ++i) {
         all_cards.push_back(Card());
     }
-    for (Color color :
-         {Color::Hearts, Color::Spades, Color::Diamonds, Color::Clubs}) {
+    for (Color color : kAllColorsList) {
         for (int val = 0; val < 13; ++val) {
             all_cards.push_back(Card(color, val));
             all_cards.push_back(Card(color, val));
@@ -357,7 +390,7 @@ int main() {
     }
 
     std::cout << "\n\n";
-    constexpr int kRandomCardsToUse = 8 * 13 + 4 - 20;
+    constexpr int kRandomCardsToUse = 8 * 13 + 4 - 10;
 
     std::random_device rd;
     std::mt19937 g(rd());
@@ -375,6 +408,7 @@ int main() {
     int call_counter = 0;
     Solve(rand_set, call_counter);
     std::cout << "Made " << call_counter << " calls.\n";
+    std::cout << "Cache useful " << cache_useful << " times.\n";
 
     return 0;
 }
