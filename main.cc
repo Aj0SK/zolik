@@ -13,9 +13,9 @@ static constexpr std::array<std::string_view, 14> kValueNames = {
     "A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "Joker"};
 
 // Up to 4 jokers; 3-/4- or 5- run;
-std::vector<std::vector<int> > run_table[5][3][1 << 5];
+std::vector<int> run_table[5][3][1 << 5];
 // Up to 4 jokers; 3 or 4 of a kind; 2^4 ways to have binary string of length 4.
-std::vector<std::vector<int> > kind_table[5][2][1 << 4];
+std::vector<int> kind_table[5][2][1 << 4];
 
 enum class Color { Hearts = 0, Spades = 1, Diamonds = 2, Clubs = 3 };
 
@@ -51,28 +51,50 @@ class Card {
 
 struct CardSet {
     CardSet()
-        : card_count(0),
-          jokers_cnt(0),
-          per_color_counters(4, std::vector<int>(13, 0)) {}
+        : card_count_(0),
+          jokers_cnt_(0),
+          per_color_counters_(4, std::vector<int>(13, 0)) {}
 
     void AddCard(Card c) {
-        ++card_count;
+        ++card_count_;
         if (c.is_joker()) {
-            ++jokers_cnt;
+            ++jokers_cnt_;
             return;
         }
-        ++per_color_counters[static_cast<int>(c.color())][c.val()];
+        ++per_color_counters_[static_cast<int>(c.color())][c.val()];
     }
-    int size() const { return card_count; }
+    void RemoveCard(Card c) {
+        --card_count_;
+        --per_color_counters_[static_cast<int>(c.color())][c.val()];
+    }
+    void AddJokers(int count) {
+        jokers_cnt_ += count;
+        card_count_ += count;
+    }
+    void RemoveJokers(int count) {
+        jokers_cnt_ -= count;
+        card_count_ -= count;
+    }
 
-    int card_count;
-    int jokers_cnt;
-    std::vector<std::vector<int> > per_color_counters;
+    bool Contains(Card c) const {
+        return per_color_counters_[static_cast<int>(c.color())][c.val()] > 0;
+    }
+    int Count(Card c) const {
+        return per_color_counters_[static_cast<int>(c.color())][c.val()];
+    }
+    int size() const { return card_count_; }
+    int empty() const { return size() == 0; }
+    int jokers_count() const { return jokers_cnt_; }
+
+   private:
+    int card_count_;
+    int jokers_cnt_;
+    std::vector<std::vector<int> > per_color_counters_;
 };
 
 // Interesting card counts are 0 and 1. Doesn't really matter if it's 1 or 2.
-std::vector<std::vector<int> > prepare_kind_table(
-    int j_cnt, int cards_to_pick, const std::vector<int>& card_counts) {
+std::vector<int> prepare_kind_table(int j_cnt, int cards_to_pick,
+                                    const std::vector<int>& card_counts) {
     // We can't use 4 jokers in triplet.
     if (j_cnt > cards_to_pick) {
         return {};
@@ -81,30 +103,32 @@ std::vector<std::vector<int> > prepare_kind_table(
     const int free_to_pick_cards = cards_to_pick - j_cnt;
     const int unused_cards = 4 - free_to_pick_cards - j_cnt;
     std::vector<int> selectors;
-    for (int i = 0; i < unused_cards; ++i) {
+    for (int i = 0; i < unused_cards + j_cnt; ++i) {
         selectors.push_back(0);
     }
     for (int i = 0; i < free_to_pick_cards; ++i) {
         selectors.push_back(1);
     }
-    for (int i = 0; i < j_cnt; ++i) {
-        selectors.push_back(2);
-    }
 
-    std::vector<std::vector<int> > out;
+    std::vector<int> out;
     do {
-        std::vector<int> bit_sel;
+        int bit_sel = 0;
+        bool all_picked_available = true;
         for (int i = 0; i < 4; ++i) {
-            if (selectors[i] == 1 && card_counts[i] == 0) break;
-            bit_sel.push_back(selectors[i]);
+            if (selectors[i] == 1 && card_counts[i] == 0) {
+                all_picked_available = false;
+                break;
+            }
+            bit_sel <<= 1;
+            if (selectors[i] == 1) bit_sel |= 1;
         }
-        if (bit_sel.size() == 4) out.push_back(bit_sel);
+        if (all_picked_available) out.push_back(bit_sel);
     } while (std::next_permutation(selectors.begin(), selectors.end()));
     return out;
 }
 
-std::vector<std::vector<int> > prepare_run_table(
-    int j_cnt, const std::vector<int>& counters) {
+std::vector<int> prepare_run_table(int j_cnt,
+                                   const std::vector<int>& counters) {
     const int run_len = counters.size();
     // Unexpected run length.
     if (run_len != 3 && run_len != 4 && run_len != 5) {
@@ -119,79 +143,84 @@ std::vector<std::vector<int> > prepare_run_table(
 
     std::vector<int> selectors;
     const int free_to_pick_cards = run_len - j_cnt;
+    for (int i = 0; i < j_cnt; ++i) {
+        selectors.push_back(0);
+    }
     for (int i = 0; i < free_to_pick_cards; ++i) {
         selectors.push_back(1);
     }
-    for (int i = 0; i < j_cnt; ++i) {
-        selectors.push_back(2);
-    }
 
-    std::vector<std::vector<int> > out;
+    std::vector<int> out;
     do {
-        std::vector<int> bit_sel;
+        int bit_sel = 0;
+        bool all_picked_available = true;
         for (int i = 0; i < run_len; ++i) {
-            if (selectors[i] == 1 && counters[i] == 0) break;
-            bit_sel.push_back(selectors[i]);
+            if (selectors[i] == 1 && counters[i] == 0) {
+                all_picked_available = false;
+                break;
+            }
+            bit_sel <<= 1;
+            if (selectors[i] == 1) bit_sel |= 1;
         }
-        if (bit_sel.size() == run_len) out.push_back(bit_sel);
+        if (all_picked_available) out.push_back(bit_sel);
     } while (std::next_permutation(selectors.begin(), selectors.end()));
     return out;
 }
 
 bool Solve(CardSet& cs, int& call_counter) {
     ++call_counter;
-    if (cs.size() == 0) {
+    if (cs.empty()) {
         return true;
     }
-    for (int jokers_to_use = 0; jokers_to_use <= cs.jokers_cnt;
+    for (int jokers_to_use = 0; jokers_to_use <= cs.jokers_count();
          ++jokers_to_use) {
         // Run handling.
         for (int run_len : {5, 4, 3}) {
-            for (int color : {0, 1, 2, 3}) {
-                auto& counters = cs.per_color_counters[color];
+            for (Color color : {Color::Hearts, Color::Spades, Color::Diamonds,
+                                Color::Clubs}) {
                 // A 2 3 4 5 6 7 8 9 10   J  Q  K
                 // 0 1 2 3 4 5 6 7 8  9  10 11 12
                 for (int idx = 0; idx + run_len <= 14; ++idx) {
                     uint32_t entry = 0;
                     for (int i = 0; i < run_len; ++i) {
                         entry <<= 1;
-                        entry += (counters[(idx + i) % 13] > 0) ? 1 : 0;
+                        entry +=
+                            cs.Contains(Card(color, (idx + i) % 13)) ? 1 : 0;
                     }
                     const auto& options =
                         run_table[jokers_to_use][run_len - 3][entry];
-                    cs.jokers_cnt -= jokers_to_use;
-                    cs.card_count -= jokers_to_use;
+                    cs.RemoveJokers(jokers_to_use);
                     bool solved = false;
-                    std::vector<int> success_option;
-                    for (auto& option : options) {
+                    int success_option;
+                    for (const int encoded_option : options) {
                         for (int i = 0; i < run_len; ++i) {
-                            if (option[i] == 1) {
-                                --counters[(idx + i) % 13];
-                                --cs.card_count;
+                            if (encoded_option & (1 << (run_len - i - 1))) {
+                                cs.RemoveCard(Card(color, (idx + i) % 13));
                             }
                         }
                         const bool success = Solve(cs, call_counter);
                         for (int i = 0; i < run_len; ++i) {
-                            if (option[i] == 1) {
-                                ++counters[(idx + i) % 13];
-                                ++cs.card_count;
+                            if (encoded_option & (1 << (run_len - i - 1))) {
+                                cs.AddCard(Card(color, (idx + i) % 13));
                             }
                         }
                         if (success) {
-                            success_option = option;
+                            success_option = encoded_option;
                             solved = true;
                             break;
                         }
                     }
-                    cs.jokers_cnt += jokers_to_use;
-                    cs.card_count += jokers_to_use;
+                    cs.AddJokers(jokers_to_use);
                     if (solved) {
                         std::cout << "Solution step: run(" << run_len << "): ";
-                        for (int i = 0; i < success_option.size(); ++i) {
-                            if (success_option[i] == 1) {
-                                const int remaining = counters[(idx + i) % 13];
-                                std::cout << kColorNames[remaining - 1][color]
-                                          << kValueNames[(idx + i) % 13] << ",";
+                        for (int i = 0; i < run_len; ++i) {
+                            if (success_option & (1 << (run_len - i - 1))) {
+                                const int remaining =
+                                    cs.Count(Card(color, (idx + i) % 13));
+                                std::cout
+                                    << kColorNames[remaining - 1]
+                                                  [static_cast<int>(color)]
+                                    << kValueNames[(idx + i) % 13] << ",";
                             }
                         }
                         std::cout << " ... with " << jokers_to_use << " jokers";
@@ -209,42 +238,39 @@ bool Solve(CardSet& cs, int& call_counter) {
                 uint32_t entry = 0;
                 for (int i = 0; i < 4; ++i) {
                     entry <<= 1;
-                    entry += (cs.per_color_counters[i][value] > 0) ? 1 : 0;
+                    entry +=
+                        cs.Contains(Card(static_cast<Color>(i), value)) ? 1 : 0;
                 }
                 const auto& options =
                     kind_table[jokers_to_use][kind_count - 3][entry];
-                cs.jokers_cnt -= jokers_to_use;
-                cs.card_count -= jokers_to_use;
+                cs.RemoveJokers(jokers_to_use);
                 bool solved = false;
-                std::vector<int> success_option;
-                for (auto& option : options) {
+                int success_option;
+                for (int encoded_option : options) {
                     for (int i = 0; i < 4; ++i) {
-                        if (option[i] == 1) {
-                            --cs.per_color_counters[i][value];
-                            --cs.card_count;
+                        if (encoded_option & (1 << (3 - i))) {
+                            cs.RemoveCard(Card(static_cast<Color>(i), value));
                         }
                     }
                     const bool success = Solve(cs, call_counter);
                     for (int i = 0; i < 4; ++i) {
-                        if (option[i] == 1) {
-                            ++cs.per_color_counters[i][value];
-                            ++cs.card_count;
+                        if (encoded_option & (1 << (3 - i))) {
+                            cs.AddCard(Card(static_cast<Color>(i), value));
                         }
                     }
                     if (success) {
-                        success_option = option;
+                        success_option = encoded_option;
                         solved = true;
                         break;
                     }
                 }
-                cs.jokers_cnt += jokers_to_use;
-                cs.card_count += jokers_to_use;
+                cs.AddJokers(jokers_to_use);
                 if (solved) {
                     std::cout << "Solution step: kind(" << kind_count << "): ";
                     for (int i = 0; i < 4; ++i) {
-                        if (success_option[i] == 1) {
+                        if (success_option & (1 << (4 - i - 1))) {
                             const int remaining =
-                                cs.per_color_counters[i][value];
+                                cs.Count(Card(static_cast<Color>(i), value));
                             std::cout << kColorNames[remaining - 1][i]
                                       << kValueNames[value] << ",";
                         }
@@ -272,14 +298,14 @@ void PrepareTables() {
     }
 
     for (int joker_count = 0; joker_count < 5; ++joker_count) {
-        for (int cards_to_pick : {3, 4, 5}) {
-            for (int comb = 0; comb < (1 << cards_to_pick); ++comb) {
+        for (int run_len : {3, 4, 5}) {
+            for (int comb = 0; comb < (1 << run_len); ++comb) {
                 std::vector<int> counts;
-                for (int i = 0; i < cards_to_pick; ++i) {
-                    const int sel = 1 << (cards_to_pick - i - 1);
+                for (int i = 0; i < run_len; ++i) {
+                    const int sel = 1 << (run_len - i - 1);
                     counts.push_back(comb & sel);
                 }
-                run_table[joker_count][cards_to_pick - 3][comb] =
+                run_table[joker_count][run_len - 3][comb] =
                     prepare_run_table(joker_count, counts);
             }
         }
@@ -329,20 +355,12 @@ int main() {
     }
 
     std::cout << "\n\n";
-    constexpr int kRandomCardsToUse = 8 * 13 + 4 - 80;
+    constexpr int kRandomCardsToUse = 8 * 13 + 4 - 20;
 
     std::random_device rd;
     std::mt19937 g(rd());
     std::shuffle(all_cards.begin(), all_cards.end(), g);
-    std::sort(all_cards.begin(), all_cards.begin() + kRandomCardsToUse,
-              [](const Card x, const Card y) {
-                  if (x.is_joker() && y.is_joker()) return false;
-                  if (x.is_joker() || y.is_joker()) return x.is_joker();
-                  if (x.color() != y.color()) {
-                      return x.color() < y.color();
-                  }
-                  return x.val() < y.val();
-              });
+    std::sort(all_cards.begin(), all_cards.begin() + kRandomCardsToUse);
 
     std::cout << "Available cards:\n";
     CardSet rand_set;
