@@ -1,3 +1,6 @@
+#include "src/card.h"
+#include "src/card-set.h"
+
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -8,133 +11,10 @@
 #include <unordered_set>
 #include <bit>
 
-static constexpr std::array<std::array<std::string_view, 4>, 2> kColorNames = {
-    {{{"\u2665", "\u2663", "\u2660", "\u2666"}},
-     {{"\u2661", "\u2667", "\u2664", "\u2662"}}}};
-static constexpr std::array<std::string_view, 14> kValueNames = {
-    "A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "Joker"};
-
 // Up to 4 jokers; 3-/4- or 5- run;
 std::vector<int> run_table[5][3][1 << 5];
 // Up to 4 jokers; 3 or 4 of a kind; 2^4 ways to have binary string of length 4.
 std::vector<int> kind_table[5][2][1 << 4];
-
-enum class Color { Hearts = 0, Spades = 1, Diamonds = 2, Clubs = 3 };
-
-constexpr Color kAllColorsList[] = {Color::Hearts, Color::Spades,
-                                    Color::Diamonds, Color::Clubs};
-
-class Card {
-   public:
-    Card() : is_joker_(true), col_(Color::Hearts), val_(0) {}
-    Card(Color col, int val) : is_joker_(false), col_(col), val_(val) {}
-    Card(Color col, std::string_view str_val) {
-        if (str_val == "Joker") {
-            is_joker_ = true;
-            return;
-        }
-        const auto it = std::find(kValueNames.begin(), kValueNames.end(), str_val);
-        if (it == kValueNames.end()) {
-            std::cerr << "Incorrect card string value " << str_val << "\n";
-            exit(1);
-        }
-        col_ = col;
-        val_ = std::distance(kValueNames.begin(), it);
-    }
-
-    bool is_joker() const { return is_joker_; }
-    Color color() const { return col_; }
-    int val() const { return val_; }
-
-    friend std::ostream& operator<<(std::ostream& os, const Card& card) {
-        if (card.is_joker()) {
-            os << "🃏︎";
-        } else {
-            os << kColorNames[0][static_cast<int>(card.col_)]
-               << kValueNames[card.val_];
-        }
-        return os;
-    }
-    friend bool operator<(const Card& l, const Card& r) {
-        if (l.is_joker() && r.is_joker()) return false;
-        if (l.is_joker() || r.is_joker()) return l.is_joker();
-        return std::tie(l.col_, l.val_) < std::tie(r.col_, r.val_);
-    }
-
-   private:
-    bool is_joker_;
-    Color col_;
-    int val_;
-};
-
-struct CardSet {
-    CardSet() : jokers_cnt_(0), per_color_counters_({0, 0, 0, 0}) {}
-
-    void AddCard(Card c) {
-        if (c.is_joker()) {
-            ++jokers_cnt_;
-            return;
-        }
-        const int color_idx = static_cast<int>(c.color());
-        const uint32_t sel = Contains(c) ? 0b10 : 0b01;
-        per_color_counters_[color_idx] |= sel << (2 * c.val());
-    }
-    void RemoveCard(Card c) {
-        const int color_idx = static_cast<int>(c.color());
-        const uint32_t sel = (Count(c) == 2) ? 0b10 : 0b01;
-        per_color_counters_[color_idx] -= sel << (2 * c.val());
-    }
-    void AddJokers(int count) { jokers_cnt_ += count; }
-    void RemoveJokers(int count) { jokers_cnt_ -= count; }
-
-    bool Contains(Card c) const {
-        const int color_idx = static_cast<int>(c.color());
-        const uint32_t sel = 0b11 << (2 * c.val());
-        return per_color_counters_[color_idx] & sel;
-    }
-    int Count(Card c) const {
-        const int color_idx = static_cast<int>(c.color());
-        const uint32_t sel = 0b11 << (2 * c.val());
-        return __builtin_popcount(per_color_counters_[color_idx] & sel);
-    }
-    int size() const {
-        int size = jokers_cnt_;
-        for (uint32_t x : per_color_counters_) {
-            size += __builtin_popcount(x);
-        }
-        return size;
-    }
-    int empty() const { 
-        uint32_t sum = jokers_cnt_;
-        for (uint32_t x : per_color_counters_) {
-            sum += x;
-        }
-        return sum == 0;
-    }
-    int jokers_count() const { return jokers_cnt_; }
-
-    bool operator==(const CardSet& other) const
-    {
-        return this->jokers_cnt_ == other.jokers_cnt_ && this->per_color_counters_ == other.per_color_counters_;
-    }
-    struct HashFunction
-    {
-        size_t operator()(const CardSet& point) const
-        {
-            const auto IntHasher = std::hash<uint32_t>();
-            size_t combined_hash = IntHasher(point.jokers_cnt_);
-            int idx = 0;
-            for (uint32_t x : point.per_color_counters_) {
-                combined_hash ^= std::rotl(IntHasher(x), ++idx) ;
-            }
-            return combined_hash;
-        }
-    };
-
-   private:
-    int jokers_cnt_;
-    std::array<uint32_t, 4> per_color_counters_;
-};
 
 // Interesting card counts are 0 and 1. Doesn't really matter if it's 1 or 2.
 std::vector<int> prepare_kind_table(int j_cnt, int cards_to_pick,
